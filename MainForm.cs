@@ -2,6 +2,10 @@ using OpenAI.Managers;
 using OpenAI.ObjectModels.RequestModels;
 using OpenAI.ObjectModels;
 using OpenAI;
+using System.Xml.Linq;
+using System.Data;
+using System.Dynamic;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace GPTDocumenter
 {
@@ -12,28 +16,158 @@ namespace GPTDocumenter
             InitializeComponent();
         }
         List<Block> blocks = new List<Block>();
-        public class Block
+        public class Block : TreeNode
         {
+            public enum ProcedureKeywords
+            {
+                @as,
+                @break,
+                @case,
+                @catch,
+                @checked,
+                @continue,
+                @default,
+                @event,
+                @finally,
+                @fixed,
+                @for,
+                @foreach,
+                @goto,
+                @if,
+                @else,
+                @in,
+                @is,
+                @lock,
+                @out,
+                @return,
+                @sizeof,
+                @stackalloc,
+                @switch,
+                @this,
+                @throw,
+                @try,
+                @typeof,
+                @unchecked,
+                @using,
+                @while,
+
+                @add,
+                @and,
+                @ascending,
+                @await,
+                @by,
+                @descending,
+                @equals,
+                @file,
+                @from,
+                @get,
+                @group,
+                @init,
+                @into,
+                @join,
+                @let,
+                @managed,
+                @nameof,
+                @not,
+                @notnull,
+                @on,
+                @or,
+                @orderby,
+                @remove,
+                @select,
+                @set,
+                @value,
+                @when,
+                @where,
+                @with,
+                @yield,
+            }
+            public enum FuncKeywords
+            {
+                @abstract,
+                @base,
+                @char,
+                @class,
+                @const,
+                @decimal,
+                @double,
+                @enum,
+                @event,
+                @explicit,
+                @extern,
+                @float,
+                @implicit,
+                @int,
+                @interface,
+                @internal,
+                @lock,
+                @long,
+                @namespace,
+                @new,
+                @object,
+                @operator,
+                @override,
+                @private,
+                @protected,
+                @public,
+                @readonly,
+                @sbyte,
+                @sealed,
+                @short,
+                @static,
+                @string,
+                @struct,
+                @switch,
+                @uint,
+                @ulong,
+                @unsafe,
+                @ushort,
+                @virtual,
+                @void,
+                @volatile,
+                @while,
+                //Contextual
+                @alias,
+                @args,
+                @async,
+                @dynamic,
+                @file,
+                @global,
+                @managed,
+                @nint,
+                @notnull,
+                @nuint,
+                @partial,
+                @record,
+                @required,
+                @scoped,
+                @unmanaged,
+                @var,
+            }
             public string Path { get; set; }
+            private string[] cache;
+            private bool update = false;
             public string[] Content
             {
                 get
                 {
+                    if (isProcedure) return null;
                     bool end = false;
                     List<string> list = new List<string>();
-                    string[] ll = File.ReadAllLines(Path);
+                    if (cache == null || update)
+                        cache = File.ReadAllLines(Path);
                     int br = 0;
-                    for (int i = Location; i < ll.Length; i++)
+                    for (int i = Location; i < cache.Length; i++)
                     {
                         string con = "";
-                        for (int j = 0; j < ll[i].Length; j++)
+                        for (int j = 0; j < cache[i].Length; j++)
                         {
-                            con += ll[i][j];
-                            if (ll[i][j] == '{')
+                            con += cache[i][j];
+                            if (cache[i][j] == '{')
                             {
                                 br++;
                             }
-                            if (ll[i][j] == '}')
+                            if (cache[i][j] == '}')
                             {
                                 br--;
                                 if (br == 0)
@@ -55,12 +189,14 @@ namespace GPTDocumenter
             {
                 get
                 {
+                    if (isProcedure) return null;
                     List<string> list = new List<string>();
-                    string[] ll = File.ReadAllLines(Path);
+                    if (cache == null || update)
+                        cache = File.ReadAllLines(Path);
                     for (int i = Location; i > 0; i--)
                     {
-                        if (ll[i - 1].Contains("///"))
-                            list.Add(ll[i - 1]);
+                        if (cache[i - 1].Contains("///"))
+                            list.Add(cache[i - 1]);
                         else
                             break;
                     }
@@ -69,9 +205,27 @@ namespace GPTDocumenter
                 }
                 set
                 {
+                    if (isProcedure) return;
                     List<string> sts = new List<string>();
-                    string[] ll = File.ReadAllLines(Path);
-                    sts.AddRange(ll);
+                    int dl = Documentation.Length;
+                    if (dl > 0)
+                    {
+                        //We need to remove the old documentation and replace it. 
+                        List<string> ss = new List<string>();
+                        ss.AddRange(cache);
+                        int c = 0;
+                        for (int l = Location; l < Location + dl; l++)
+                        {
+                            ss.RemoveAt(Location - dl);
+                        }
+                        sts = ss;
+                        Location -= dl;
+                    }
+                    else
+                    {
+                        string[] ll = File.ReadAllLines(Path);
+                        sts.AddRange(ll);
+                    }
                     int i = 0;
                     foreach (string s in value)
                     {
@@ -82,22 +236,37 @@ namespace GPTDocumenter
                         }
                     }
                     File.WriteAllLines(Path, sts.ToArray());
+                    cache = sts.ToArray();
+                    Location += i;
                 }
             }
-            public Block Parent { get; set; }
-            public string Header { get; set; }
-            public List<Block> Children = new List<Block>();
             public int Location { get; set; }
-            public bool isPublic
+            public bool IsFile = false;
+            public bool IsPublic
             {
                 get
                 {
-                    return Header.Contains("public");
+                    return Text.Contains("public");
+                }
+            }
+            public bool isProcedure
+            {
+                get
+                {
+                    foreach (ProcedureKeywords aw in (ProcedureKeywords[])Enum.GetValues(typeof(ProcedureKeywords)))
+                    {
+                        string[] words = Text.Split(new char[] { ' ', '.', '?' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (words.Contains(aw.ToString()))
+                            return true;
+                    }
+                    return false;
                 }
             }
             public Block(string file)
             {
+                Path = file;
                 Block main = new Block();
+                main.Path = file;
                 Block b = new Block();
                 string[] ls = File.ReadAllLines(file);
                 int br = 0;
@@ -111,7 +280,7 @@ namespace GPTDocumenter
                             if (br == 0)
                             {
                                 //This is a namespace
-                                b.Header = ls[i - 1];
+                                b.Text = ls[i - 1];
                                 b.Location = i - 1;
                                 main = b;
                             }
@@ -119,10 +288,10 @@ namespace GPTDocumenter
                             {
                                 Block bl = new Block();
                                 //This a new block of code we will add it to it's parent
-                                bl.Header = ls[i - 1];
+                                bl.Text = ls[i - 1];
                                 bl.Location = i - 1;
-                                bl.Parent = b;
-                                b.Children.Add(bl);
+                                bl.Path = file;
+                                b.Nodes.Add(bl);
                                 b = bl;
                             }
                             br++;
@@ -134,38 +303,50 @@ namespace GPTDocumenter
                             if (br == 0)
                             {
                                 //End of namespace
+                                Path = main.Path;
+                                Nodes.Clear();
+                                TreeNode[] tns = new TreeNode[main.Nodes.Count];
+                                for (int t = 0; t < main.Nodes.Count; t++)
+                                {
+                                    tns[t] = main.Nodes[t];
+                                }
+                                Nodes.AddRange(tns);
+                                Text = main.Text;
+                                Location = main.Location;
                                 return;
                             }
                             else
                             {
-                                b = b.Parent;
+                                b = (Block)b.Parent;
                             }
                         }
                     }
                 }
+                Path = main.Path;
+                TreeNode[] bls = new TreeNode[main.Nodes.Count];
+                for (int t = 0; t < main.Nodes.Count; t++)
+                {
+                    bls[t] = main.Nodes[t];
+                }
+                Nodes.AddRange(bls);
+                Text = main.Text;
+                Location = main.Location;
             }
             public Block()
             {
 
             }
+            public void Update()
+            {
+                cache = File.ReadAllLines(Path);
+                foreach (Block b in Nodes)
+                {
+                    b.Update();
+                }
+            }
             public override string ToString()
             {
-                return Header.ToString();
-            }
-        }
-
-        private void treeView_AfterSelect(object sender, TreeViewEventArgs e)
-        {
-            Block b = (Block)e.Node.Tag;
-            blockBox.Lines = b.Content;
-            docBox.Lines = b.Documentation;
-            if (e.Node.Nodes.Count == 0)
-            foreach (var item in b.Children)
-            {
-                TreeNode n = new TreeNode();
-                n.Tag = item;
-                n.Text = item.Header;
-                e.Node.Nodes.Add(n);
+                return Text.ToString();
             }
         }
 
@@ -198,62 +379,112 @@ namespace GPTDocumenter
 
         async void GenerateSelected(TreeNodeCollection nodes)
         {
-            foreach (TreeNode node in nodes)
+            foreach (Block b in nodes)
             {
-                Block b = (Block)node.Tag;
-                if (node.Checked)
-                {
-                    if (anyRBut.Checked || (publicRBut.Checked && b.isPublic))
+                if (!b.IsFile)
+                    if (b.Checked)
                     {
-                        string con = "";
-                        foreach (string s in b.Content) { con += s + Environment.NewLine; }
-                        string doc = await Generate(con);
-                        string[] ds = doc.Split('\n');
-                        b.Documentation = ds;
-                        node.Tag = b;
+                        if (anyRBut.Checked || (publicRBut.Checked && b.IsPublic))
+                        {
+                            string con = "";
+                            foreach (string s in b.Content) { con += s + Environment.NewLine; }
+                            string doc = await Generate(con);
+                            string sp = "\r\n";
+                            string[] ds;
+                            if(doc.Contains(sp))
+                                ds = doc.Split(sp);
+                            else
+                                ds = doc.Split('\n');
+                            b.Documentation = ds;
+                            b.Update();
+                        }
                     }
-                }
                 // If the node has child nodes, recursively call this method
-                if (node.Nodes.Count > 0)
+                if (b.Nodes.Count > 0)
                 {
-                    GenerateSelected(node.Nodes);
+                    GenerateSelected(b.Nodes);
                 }
             }
         }
 
         async void GenerateAll(TreeNodeCollection nodes)
         {
-            foreach (TreeNode node in nodes)
+            foreach (Block b in nodes)
             {
-                Block b = (Block)node.Tag;
-                if (anyRBut.Checked || (publicRBut.Checked && b.isPublic))
-                {
-                    string con = "";
-                    foreach (string s in b.Content) { con += s + Environment.NewLine; }
-                    string doc = await Generate(con);
-                    string[] ds = doc.Split('\n');
-                    b.Documentation = ds;
-                    node.Tag = b;
-                }
+                if (!b.IsFile)
+                    if (b.isProcedure)
+                        if (anyRBut.Checked || (publicRBut.Checked && b.IsPublic))
+                        {
+                            string con = "";
+                            foreach (string s in b.Content) { con += s + Environment.NewLine; }
+                            string doc = await Generate(con);
+                            string[] ds = doc.Split('\n');
+                            b.Documentation = ds;
+                            b.Update();
+                        }
                 // If the node has child nodes, recursively call this method
-                if (node.Nodes.Count > 0)
+                if (b.Nodes.Count > 0)
                 {
-                    GenerateAll(node.Nodes);
+                    GenerateAll(b.Nodes);
+                }
+            }
+        }
+        Block Find(TreeNodeCollection nodes, Block bl)
+        {
+            foreach (Block b in nodes)
+            {
+                if (b == bl)
+                    return b;
+                // If the node has child nodes, recursively call this method
+                if (b.Nodes.Count > 0)
+                {
+                    Find(b.Nodes, bl);
+                }
+            }
+            return null;
+        }
+        List<Block> bls = new List<Block>();
+        void RemoveInvalid(TreeNodeCollection nodes)
+        {
+            foreach (Block b in nodes)
+            {
+                if (!b.IsFile && b.isProcedure)
+                    bls.Add(b);
+                // If the node has child nodes, recursively call this method
+                if (b.Nodes.Count > 0)
+                {
+                    RemoveInvalid(b.Nodes);
                 }
             }
         }
 
-        private void UpdateItems(TreeNodeCollection ns)
+        async void GenerateMissing(TreeNodeCollection nodes)
         {
-            foreach (TreeNode node in ns)
+            foreach (Block b in nodes)
             {
-                Block b = (Block)node.Tag;
-                node.Tag = new Block(b.Path);
+                if (!b.IsFile)
+                    if (b.Documentation.Length == 0 && b.isProcedure)
+                        if (anyRBut.Checked || (publicRBut.Checked && b.IsPublic))
+                        {
+                            string con = "";
+                            foreach (string s in b.Content) { con += s + Environment.NewLine; }
+                            string doc = await Generate(con);
+                            string[] ds = doc.Split('\n');
+                            b.Documentation = ds;
+                            b.Update();
+                        }
                 // If the node has child nodes, recursively call this method
-                if (node.Nodes.Count > 0)
+                if (b.Nodes.Count > 0)
                 {
-                    UpdateItems(node.Nodes);
+                    GenerateMissing(b.Nodes);
                 }
+            }
+        }
+        private void UpdateTreeview()
+        {
+            foreach (Block n in blocks)
+            {
+                treeView.Nodes.Add(n);
             }
         }
 
@@ -272,23 +503,16 @@ namespace GPTDocumenter
             if (folderBrowserDialog.ShowDialog() != DialogResult.OK) return;
             foreach (string item in Directory.GetFiles(folderBrowserDialog.SelectedPath))
             {
-                blocks.Add(new Block(item));
+                if (item.EndsWith(".cs") && !item.ToLower().Contains(".designer"))
+                {
+                    Block b = new Block();
+                    b.IsFile = true;
+                    b.Text = Path.GetFileName(item);
+                    b.Nodes.Add(new Block(item));
+                    blocks.Add(b);
+                }
             }
-            foreach (Block b in blocks)
-            {
-                TreeNode tn = new TreeNode();
-                tn.Tag = b;
-                tn.Text = Path.GetFileName(b.Path);
-                treeView.Nodes.Add(tn);
-            }
-        }
-
-        private void treeView_BeforeCheck(object sender, TreeViewCancelEventArgs e)
-        {
-            foreach (TreeNode n in e.Node.Nodes)
-            {
-                n.Checked = e.Node.Checked;
-            }
+            UpdateTreeview();
         }
 
         private void addFilesToolStripMenuItem_Click(object sender, EventArgs e)
@@ -296,21 +520,38 @@ namespace GPTDocumenter
             if (openFileDialog.ShowDialog() != DialogResult.OK) return;
             foreach (string item in openFileDialog.FileNames)
             {
-                blocks.Add(new Block(item));
+                Block b = new Block();
+                b.IsFile = true;
+                b.Text = Path.GetFileName(item);
+                b.Nodes.Add(new Block(item));
+                blocks.Add(b);
             }
-            foreach (Block b in blocks)
-            {
-                TreeNode tn = new TreeNode();
-                tn.Tag = b;
-                tn.Text = Path.GetFileName(b.Path);
-                treeView.Nodes.Add(tn);
-            }
+            UpdateTreeview();
         }
 
         private void clearFilesToolStripMenuItem_Click(object sender, EventArgs e)
         {
             treeView.Nodes.Clear();
             blocks.Clear();
+        }
+
+        private void missingBut_Click(object sender, EventArgs e)
+        {
+            GenerateMissing(treeView.Nodes);
+        }
+
+        private void treeView_BeforeSelect(object sender, TreeViewCancelEventArgs e)
+        {
+            if (((Block)e.Node).isProcedure)
+                e.Cancel = true;
+            docBox.Lines = ((Block)e.Node).Documentation;
+            blockBox.Lines = ((Block)e.Node).Content;
+        }
+
+        private void treeView_BeforeCheck(object sender, TreeViewCancelEventArgs e)
+        {
+            if(((Block)e.Node).isProcedure)
+                e.Cancel= true;
         }
     }
 }
